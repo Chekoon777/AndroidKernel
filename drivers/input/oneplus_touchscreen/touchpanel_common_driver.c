@@ -156,15 +156,16 @@ int check_touchirq_triggerd(void)
 
 /*******Part3:Function  Area********************************/
 /**
- * operate_mode_switch - switch work mode based on current params
+ * operate_mode_switch - switch work mode based params
  * @ts: touchpanel_data struct using for common driver
  *
- * switch work mode based on current params(gesture_enable, limit_enable, glove_enable)
+ * switch work mode based params(gesture_enable, limit_enable, glove_enable)
  * Do not care the result: Return void type
  */
 static void operate_mode_switch(struct touchpanel_data *ts)
 {
-	if (!ts->ts_ops->mode_switch) {
+	if (!ts->
+	ts_ops->mode_switch) {
 		TPD_INFO("not support ts_ops->mode_switch callback\n");
 		return;
 	}
@@ -212,10 +213,74 @@ static void operate_mode_switch(struct touchpanel_data *ts)
 	}
 }
 
+#define MAX_QUEUE_LEN 1000
+#define MIN_SEG_LEN 50
+
+static struct Coordinate headpoint = {-1, -1};
+static struct Coordinate prevpoint = {-1, -1};
+
+static int queuelen;
+static int clockwisecnt;
+static struct Coordinate sum;
+
+static int waited;
+
+void QueueInit(void) {
+	headpoint.x = headpoint.y = -1;
+	prevpoint.x = prevpoint.y = -1;
+
+	queuelen = 0;
+	clockwisecnt = 0;
+	sum.x = sum.y = 0;
+
+	waited = 0;
+}
+
+// Judging Circle
+void checkIfGestureForward(struct Coordinate point) {
+	struct Coordinate avgpoint;
+	int tanprev, tancurr;
+
+	if(prevpoint.x == -1) {
+		prevpoint = point;
+		headpoint = point;
+		return;
+	}
+	if(queuelen < 50) return;
+
+	avgpoint.x = sum.x / queuelen;
+	avgpoint.y = sum.y / queuelen;
+	// pr_info("AVGPOINT: (%d, %d)", avgpoint.x, avgpoint.y);
+
+	tanprev = (10000000 * (prevpoint.y - avgpoint.y)) / (prevpoint.x - avgpoint.x);
+	tancurr = (10000000 * (point.y - avgpoint.y)) / (point.x - avgpoint.x);
+
+	if(tanprev < tancurr) clockwisecnt++;
+	
+	prevpoint = point;
+}
+
+int ClockGestureDetect(int px, int py) {
+	struct Coordinate point = {px, py};
+
+	sum.x += point.x;
+	sum.y += point.y;
+	queuelen++;
+
+	checkIfGestureForward(point);
+
+	if(queuelen > 200) {
+		if		(1000 * clockwisecnt / queuelen > 700) return KEY_VOLUMEUP;
+		else if	(1000 * clockwisecnt / queuelen < 300) return KEY_VOLUMEDOWN;
+	}
+	return 0;
+}
+
 static void tp_touch_down(struct touchpanel_data *ts, struct point_info points,
 			  int touch_report_num, int id)
 {
 	static int last_width_major;
+	int clockgestureresult;
 
 	if (ts->input_dev == NULL)
 		return;
@@ -256,6 +321,28 @@ static void tp_touch_down(struct touchpanel_data *ts, struct point_info points,
 	input_report_abs(ts->input_dev, ABS_MT_POSITION_X, points.x);
 	input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, points.y);
 
+	// pr_info("GESTURE: %d points, clockwise ratio: 0.%d", queuelen, 1000 * clockwisecnt / queuelen);
+
+	if((clockgestureresult = ClockGestureDetect(points.x, points.y))) {
+		if(waited < 20) {
+			waited++;
+		}
+		else {
+			pr_info("=================================================");
+			pr_info("TOUCHPANEL: %s Circle Gesture Detected!!", clockgestureresult == KEY_VOLUMEUP ? "Clockwise" : "Counter-Clockwise");
+			
+			set_bit(clockgestureresult, ts->input_dev->keybit);
+			input_report_key(ts->input_dev, clockgestureresult, 1);
+			input_sync(ts->input_dev);
+			input_report_key(ts->input_dev, clockgestureresult, 0);
+			input_sync(ts->input_dev);
+
+			pr_info("=================================================");
+
+			waited = 0;
+		}
+	}
+
 	TPD_INFO("Touchpanel id %d :Down[%4d %4d %4d]\n",
 			   id, points.x, points.y, points.z);
 
@@ -274,6 +361,8 @@ static void tp_touch_up(struct touchpanel_data *ts)
 #ifndef TYPE_B_PROTOCOL
 	input_mt_sync(ts->input_dev);
 #endif
+
+	QueueInit();
 }
 
 static void tp_exception_handle(struct touchpanel_data *ts)
@@ -432,62 +521,77 @@ static void tp_gesture_handle(struct touchpanel_data *ts)
 		case DouTap:
 			enabled = DouTap_enable;
 			key = KEY_DOUBLE_TAP;
+			pr_info("DouTap");
 			break;
 		case UpVee:
 			enabled = UpVee_enable;
 			key = KEY_GESTURE_UP_ARROW;
+			pr_info("UpVee");
 			break;
 		case DownVee:
 			enabled = DownVee_enable;
 			key = KEY_GESTURE_DOWN_ARROW;
+			pr_info("DownVee");
 			break;
 		case LeftVee:
 			enabled = LeftVee_enable;
 			key = KEY_GESTURE_LEFT_ARROW;
+			pr_info("LeftVee");
 			break;
 		case RightVee:
 			enabled = RightVee_enable;
 			key = KEY_GESTURE_RIGHT_ARROW;
+			pr_info("RightVee");
 			break;
 		case Circle:
 			enabled = Circle_enable;
 			key = KEY_GESTURE_CIRCLE;
+			pr_info("Circle");
 			break;
 		case DouSwip:
 			enabled = DouSwip_enable;
 			key = KEY_GESTURE_TWO_SWIPE;
+			pr_info("DouSwip");
 			break;
 		case Left2RightSwip:
 			enabled = Left2RightSwip_enable;
 			key = KEY_GESTURE_SWIPE_LEFT;
+			pr_info("Left2RightSwip");
 			break;
 		case Right2LeftSwip:
 			enabled = Right2LeftSwip_enable;
 			key = KEY_GESTURE_SWIPE_RIGHT;
+			pr_info("Right2LeftSwip");
 			break;
 		case Up2DownSwip:
 			enabled = Up2DownSwip_enable;
 			key = KEY_GESTURE_SWIPE_UP;
+			pr_info("Up2DownSwip");
 			break;
 		case Down2UpSwip:
 			enabled = Down2UpSwip_enable;
 			key = KEY_GESTURE_SWIPE_DOWN;
+			pr_info("Down2UpSwip");
 			break;
 		case Mgestrue:
 			enabled = Mgestrue_enable;
 			key = KEY_GESTURE_M;
+			pr_info("Mgestrue");
 			break;
 		case Sgestrue:
 			enabled = Sgestrue_enable;
 			key = KEY_GESTURE_S;
+			pr_info("Sgestrue");
 			break;
 		case SingleTap:
 			enabled = SingleTap_enable;
 			key = KEY_GESTURE_SINGLE_TAP;
+			pr_info("SingleTap");
 			break;
 		case Wgestrue:
 			enabled = Wgestrue_enable;
 			key = KEY_GESTURE_W;
+			pr_info("Wgestrue");
 			break;
 	}
 
@@ -806,6 +910,7 @@ static void tp_work_func(struct touchpanel_data *ts)
 	cur_event =
 	    ts->ts_ops->trigger_reason(ts->chip_data, ts->gesture_enable,
 				       ts->is_suspended);
+					   
 	if (CHK_BIT(cur_event, IRQ_TOUCH) || CHK_BIT(cur_event, IRQ_BTN_KEY)
 	    || CHK_BIT(cur_event, IRQ_FACE_STATE)) {
 		if (CHK_BIT(cur_event, IRQ_BTN_KEY)) {
@@ -2029,6 +2134,8 @@ static int init_touchpanel_proc(struct touchpanel_data *ts)
 	int ret = 0;
 	struct proc_dir_entry *prEntry_tp = NULL;
 	struct proc_dir_entry *prEntry_tmp = NULL;
+
+	QueueInit();
 
 	TPD_INFO("%s entry\n", __func__);
 

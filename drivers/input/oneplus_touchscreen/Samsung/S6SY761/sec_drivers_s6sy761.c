@@ -1612,6 +1612,10 @@ static int sec_get_gesture_info(void *chip_data, struct gesture_info *gesture)
 	     gesture->Point_3rd.x, gesture->Point_3rd.y, gesture->Point_4th.x,
 	     gesture->Point_4th.y);
 
+	// pr_info
+	    // ("gesture_id: 0x%x, gesture_type: %d, points: (%d, %d)(%d, %d)(%d, %d)(%d, %d)(%d, %d)(%d, %d)\n",
+	    	// p_event_gesture->gestureId, gesture->gesture_type, coord[0].x, coord[0].y, coord[1].x, coord[1].y, coord[2].x, coord[2].y, coord[3].x, coord[3].y, coord[4].x, coord[4].y, coord[5].x, coord[5].y);
+
 	return 0;
 }
 

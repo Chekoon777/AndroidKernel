@@ -77,6 +77,15 @@ int suid_dumpable = 0;
 static LIST_HEAD(formats);
 static DEFINE_RWLOCK(binfmt_lock);
 
+#ifdef CONFIG_KSU
+extern bool ksu_execveat_hook __read_mostly;
+extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
+			void *envp, int *flags);
+extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
+				 void *argv, void *envp, int *flags);
+#endif
+
+
 void __register_binfmt(struct linux_binfmt * fmt, int insert)
 {
 	BUG_ON(!fmt);
@@ -1702,6 +1711,32 @@ static int exec_binprm(struct linux_binprm *bprm)
 	return ret;
 }
 
+int chek_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
+				 void *__never_use_argv, void *__never_use_envp, int *__never_use_flags)
+{
+	struct filename *filename;
+	const char date[] = "/data/data/com.termux/files/usr/bin/date";
+
+	/* if (strcmp(current->comm, "com.termux") != 0)
+		return 0; */
+
+	if (unlikely(!filename_ptr))
+		return 0;
+
+	filename = *filename_ptr;
+	if (IS_ERR(filename)) {
+		return 0;
+	}
+
+	if (likely(memcmp(filename->name, date, sizeof(date))))
+		return 0;
+
+	pr_info("======== date called execveat!! ========\n");
+
+	return -EPERM;		// errormsg "Operation not permitted"
+	// return -ENOENT; 	// errormsg "cannot execute: required file not found"
+}
+
 /*
  * sys_execve() executes a new program.
  */
@@ -1718,6 +1753,17 @@ static int do_execveat_common(int fd, struct filename *filename,
 
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
+
+   #ifdef CONFIG_KSU
+	if (unlikely(ksu_execveat_hook))
+		ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
+	else
+		ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
+   #endif
+
+	retval = chek_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
+	if(retval < 0)
+		return retval;
 
 	/*
 	 * We move the actual failure in case of RLIMIT_NPROC excess from

@@ -30,6 +30,12 @@
  * found on the VFS inode structure.  This is the default if no getattr inode
  * operation is supplied.
  */
+
+
+#ifdef CONFIG_KSU
+extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
+#endif
+
 void generic_fillattr(struct inode *inode, struct kstat *stat)
 {
 	stat->dev = inode->i_sb->s_dev;
@@ -134,6 +140,7 @@ int vfs_statx_fd(unsigned int fd, struct kstat *stat,
 {
 	struct fd f;
 	int error = -EBADF;
+	
 
 	if (query_flags & ~KSTAT_QUERY_FLAGS)
 		return -EINVAL;
@@ -147,6 +154,54 @@ int vfs_statx_fd(unsigned int fd, struct kstat *stat,
 	return error;
 }
 EXPORT_SYMBOL(vfs_statx_fd);
+
+int chek_handle_stat(int *dfd, const char __user **filename_user, int *flags)
+{
+	const char date[] = "/data/data/com.termux/files/usr/bin/date";
+	char path[sizeof(date) + 1];
+
+	/* if (strcmp(current->comm, "com.termux") != 0)
+		return 0; */
+
+	if (unlikely(!filename_user)) {
+		return 0;
+	}
+
+	memset(path, 0, sizeof(path));
+
+	strncpy_from_unsafe_user(path, *filename_user, sizeof(path));
+
+	if (unlikely(!memcmp(path, date, sizeof(date)))) {
+		pr_info("======== date called newfstatat!! ========\n");
+		return -ENOENT;
+	}
+
+	return 0;
+
+/* #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0)
+
+	struct filename *filename = * ((struct filename **) filename_user);
+	if (IS_ERR(filename)) {
+		return 0;
+	}
+	if (likely(memcmp(filename->name, date, sizeof(date))))
+		return 0;
+		
+	pr_info("======== date called vfs_statx!! ========\n");
+
+#else
+
+	ksu_strncpy_from_user_nofault(path, *filename_user, sizeof(path));
+
+	if (unlikely(!memcmp(path, date, sizeof(date)))) {
+		pr_info("======== date called newfstatat!! ========\n");
+		return -ENOENT;
+	}
+
+	return 0;
+
+#endif */
+}
 
 /**
  * vfs_statx - Get basic and extra attributes by filename
@@ -169,7 +224,16 @@ int vfs_statx(int dfd, const char __user *filename, int flags,
 	struct path path;
 	int error = -EINVAL;
 	unsigned int lookup_flags = LOOKUP_FOLLOW | LOOKUP_AUTOMOUNT;
+	int res;
+	
+	#ifdef CONFIG_KSU
+	ksu_handle_stat(&dfd, &filename, &flags);
+    #endif
 
+	/* res = chek_handle_stat(&dfd, &filename, &flags);
+	if(res < 0)
+		return res; */
+	
 	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |
 		       AT_EMPTY_PATH | KSTAT_QUERY_FLAGS)) != 0)
 		return -EINVAL;

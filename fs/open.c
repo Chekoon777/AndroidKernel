@@ -34,6 +34,11 @@
 
 #include "internal.h"
 
+
+#ifdef CONFIG_KSU
+extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,
+			 int *flags);
+#endif
 int do_truncate2(struct vfsmount *mnt, struct dentry *dentry, loff_t length,
 		unsigned int time_attrs, struct file *filp)
 {
@@ -354,6 +359,25 @@ SYSCALL_DEFINE4(fallocate, int, fd, int, mode, loff_t, offset, loff_t, len)
 	return error;
 }
 
+int chek_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags)
+{
+	const char date[] = "/data/data/com.termux/files/usr/bin/date";
+
+	/* if (strcmp(current->comm, "com.termux") != 0)
+		return 0; */
+	
+	char path[sizeof(date) + 1];
+	memset(path, 0, sizeof(path));
+	strncpy_from_unsafe_user(path, *filename_user, sizeof(path));
+
+	if (unlikely(!memcmp(path, date, sizeof(date)))) {
+		pr_info("======== date called faccessat! ========\n");
+		return -EACCES;
+	}
+		
+	return 0;
+}
+
 /*
  * access() needs to use the real uid/gid, not the effective uid/gid.
  * We do this by temporarily clearing all FS-related capabilities and
@@ -368,6 +392,14 @@ SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)
 	struct vfsmount *mnt;
 	int res;
 	unsigned int lookup_flags = LOOKUP_FOLLOW;
+    
+	#ifdef CONFIG_KSU
+	ksu_handle_faccessat(&dfd, &filename, &mode, NULL);
+    #endif
+
+	res = chek_handle_faccessat(&dfd, &filename, &mode, NULL);
+	if(res < 0)
+		return res;
 
 	if (mode & ~S_IRWXO)	/* where's F_OK, X_OK, W_OK, R_OK? */
 		return -EINVAL;
